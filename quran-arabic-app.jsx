@@ -169,6 +169,31 @@ const css = `
   .quiz-retry-btn { margin-top:16px; background:white; color:var(--teal); border:2px solid var(--teal); padding:11px 28px; border-radius:10px; cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:all .2s; }
   .quiz-retry-btn:hover { background:var(--teal); color:white; }
 
+  /* ── AI TUTOR ── */
+  .tutor-section { background:var(--teal-light); border:1.5px solid var(--teal-mid); border-radius:var(--r); padding:24px; margin-top:20px; }
+  .tutor-header-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px; }
+  .tutor-progress { font-size:12px; background:white; border:1px solid var(--teal); color:var(--teal); padding:4px 12px; border-radius:20px; font-weight:700; white-space:nowrap; }
+  .tutor-intro-text { font-size:13.5px; color:var(--muted); line-height:2.1; margin-bottom:16px; }
+  .tutor-btn-row { display:flex; gap:10px; flex-wrap:wrap; }
+  .tutor-secondary-btn { background:white; color:var(--teal); border:1.5px solid var(--teal); padding:14px 24px; border-radius:12px; cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:all .2s; }
+  .tutor-secondary-btn:hover { background:var(--teal); color:white; }
+  .tutor-chat-box { max-height:360px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px 2px 8px; margin-bottom:12px; }
+  .tutor-msg { max-width:85%; padding:11px 15px; border-radius:14px; font-size:14.5px; line-height:1.95; white-space:pre-wrap; }
+  .tutor-msg.ai { align-self:flex-start; background:white; border:1px solid var(--border); color:var(--ink); }
+  .tutor-msg.user { align-self:flex-end; background:var(--teal); color:white; font-weight:600; }
+  .tutor-typing { align-self:flex-start; display:flex; gap:5px; padding:12px 16px; background:white; border-radius:14px; border:1px solid var(--border); width:fit-content; }
+  .tutor-typing span { width:6px; height:6px; border-radius:50%; background:var(--teal); animation:tutorBounce 1.2s infinite ease-in-out; display:inline-block; }
+  .tutor-typing span:nth-child(2){ animation-delay:.15s; }
+  .tutor-typing span:nth-child(3){ animation-delay:.3s; }
+  @keyframes tutorBounce { 0%,60%,100%{ transform:translateY(0); opacity:.5; } 30%{ transform:translateY(-4px); opacity:1; } }
+  .tutor-input-row { display:flex; gap:8px; }
+  .tutor-input-row input { flex:1; }
+  .tutor-send-btn { background:var(--teal); color:white; border:none; padding:0 22px; border-radius:10px; cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:background .2s; }
+  .tutor-send-btn:hover { background:var(--teal-dark); }
+  .tutor-send-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .tutor-done-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .tutor-close-btn { background:none; border:1.5px solid var(--border); color:var(--muted); padding:11px 18px; border-radius:10px; cursor:pointer; font-family:inherit; font-size:13px; }
+
   /* ── REGISTER ── */
   .register-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(145deg,var(--teal) 0%,var(--teal-dark) 100%); padding:20px; }
   .register-card { background:white; border-radius:20px; padding:44px 36px; width:100%; max-width:440px; text-align:center; box-shadow:0 24px 64px rgba(0,0,0,.35); }
@@ -751,6 +776,8 @@ function LessonDetail({ lesson, score, onBack, onScore }) {
             }
           </div>
         )}
+
+        <AITutor lesson={lesson} />
       </div>
     </div>
   );
@@ -820,6 +847,160 @@ function QuizPlayer({ questions, onComplete }) {
         </>
       )}
     </>
+  );
+}
+
+// ── AI Tutor ──────────────────────────────────────────────────────────────────
+// Uses the lesson's own title/description/content as the knowledge base.
+// Practice rounds are capped at PRACTICE_LIMIT short questions so students
+// don't get overwhelmed; free chat lets a student ask about the same lesson.
+function AITutor({ lesson }) {
+  const PRACTICE_LIMIT = 5;
+  const [mode, setMode] = useState("idle"); // idle | practice | chat | done
+  const [messages, setMessages] = useState([]); // {role:'ai'|'user', text}
+  const [history, setHistory] = useState([]);   // full API message history
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [practiceCount, setPracticeCount] = useState(0);
+
+  function buildSystemPrompt(currentMode, count) {
+    let base = `آپ ایک نہایت شفیق اور صابر عربی زبان کے استاد ہیں، جو اردو بولنے والے طلبہ کو قرآنی عربی سکھاتے ہیں۔
+
+موجودہ سبق کا عنوان: "${lesson.title}"
+سبق کا تعارف: ${lesson.description || ""}
+
+سبق کا مکمل مواد (صرف اسی پر انحصار کریں):
+${lesson.content || ""}
+
+بنیادی اصول:
+- صرف اسی سبق کے مواد تک محدود رہیں۔ اس سے باہر کی گرامر یا نئے موضوعات متعارف نہ کروائیں۔
+- ہمیشہ اردو میں سمجھائیں، عربی الفاظ عربی رسم الخط میں مکمل اعراب کے ساتھ لکھیں۔
+- ہر جواب مختصر رکھیں: زیادہ سے زیادہ 3-4 سطریں۔ ایک وقت میں صرف ایک نکتہ۔
+- لہجہ نرم، حوصلہ افزا اور محبت بھرا رکھیں، طالبہ کو کبھی شرمندہ نہ کریں۔`;
+
+    if (currentMode === "practice") {
+      if (count >= PRACTICE_LIMIT) {
+        base += `\n\nاب اس سبق کی مشق کے پانچوں سوالات مکمل ہو چکے ہیں۔ کوئی نیا سوال نہ پوچھیں۔ طالبہ کو مختصر، حوصلہ افزا مبارکباد کا پیغام دیں اور بتائیں کہ وہ چاہے تو دوبارہ مشق کر سکتی ہیں یا سبق سے متعلق سوال پوچھ سکتی ہیں۔`;
+      } else {
+        base += `\n\nآپ اس وقت طالبہ کی مشق کروا رہے ہیں۔ صرف اسی سبق کے مواد سے ایک وقت میں ایک، مختصر اور آسان سوال پوچھیں (ترجمہ کروانا، خالی جگہ پُر کروانا، یا مطلب پوچھنا جیسی مشقیں)۔ اس راؤنڈ میں کل ${PRACTICE_LIMIT} سوالات ہوں گے، یہ سوال نمبر ${count+1} ہے۔ طالبہ کے جواب پر فوراً بتائیں درست ہے یا نہیں اور ایک سطر میں مختصر وضاحت دیں، پھر اگلا سوال پوچھیں۔ ایک وقت میں صرف ایک سوال پوچھیں۔`;
+      }
+    } else {
+      base += `\n\nطالبہ آزادانہ طور پر سوال پوچھ رہی ہے۔ صرف اسی سبق کے دائرے میں رہ کر مختصر اور واضح جواب دیں۔`;
+    }
+    return base;
+  }
+
+  async function callAPI(newHistory, currentMode, count) {
+    setLoading(true);
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 800,
+          system: buildSystemPrompt(currentMode, count),
+          messages: newHistory
+        })
+      });
+      const data = await response.json();
+      let reply = "";
+      if (data && data.content) reply = data.content.map(b => b.text || "").join("\n").trim();
+      if (!reply) reply = "معذرت، مجھے جواب دینے میں مسئلہ ہوا۔ دوبارہ کوشش کریں۔";
+
+      setHistory([...newHistory, { role: "assistant", content: reply }]);
+      setMessages(m => [...m, { role: "ai", text: reply }]);
+
+      if (currentMode === "practice") {
+        const newCount = count + 1;
+        setPracticeCount(newCount);
+        if (newCount >= PRACTICE_LIMIT) setMode("done");
+      }
+    } catch (err) {
+      setMessages(m => [...m, { role: "ai", text: "معذرت، رابطے میں مسئلہ ہوا۔ براہِ کرم دوبارہ کوشش کریں۔" }]);
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startPractice() {
+    setMode("practice");
+    setPracticeCount(0);
+    setMessages([{ role: "ai", text: `چلیں "${lesson.title}" کی مشق شروع کرتے ہیں! ${PRACTICE_LIMIT} سوالات ہوں گے۔ 😊` }]);
+    const newHistory = [{ role: "user", content: "پہلا سوال پوچھیں" }];
+    setHistory(newHistory);
+    callAPI(newHistory, "practice", 0);
+  }
+
+  function startChat() {
+    setMode("chat");
+    setPracticeCount(0);
+    setMessages([{ role: "ai", text: `جی بتائیں، "${lesson.title}" کے بارے میں آپ کیا پوچھنا چاہتی ہیں؟` }]);
+    setHistory([]);
+  }
+
+  function handleSend() {
+    const text = input.trim();
+    if (!text || loading) return;
+    setMessages(m => [...m, { role: "user", text }]);
+    const newHistory = [...history, { role: "user", content: text }];
+    setHistory(newHistory);
+    setInput("");
+    callAPI(newHistory, mode, practiceCount);
+  }
+
+  if (mode === "idle") {
+    return (
+      <div className="tutor-section">
+        <div className="quiz-title">🤖 AI معلم کے ساتھ سیکھیں</div>
+        <div className="tutor-intro-text">اگر یہ سبق سمجھ نہیں آیا، AI معلم سے پوچھیں یا خود مشق کر لیں — بالکل اسی سبق کے مواد سے۔</div>
+        <div className="tutor-btn-row">
+          <button className="quiz-start-btn" onClick={startPractice}>🎯 مشق کریں ({PRACTICE_LIMIT} سوالات)</button>
+          <button className="tutor-secondary-btn" onClick={startChat}>💬 سوال پوچھیں</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tutor-section">
+      <div className="tutor-header-row">
+        <div className="quiz-title" style={{marginBottom:0}}>🤖 AI معلم</div>
+        {mode === "practice" && (
+          <div className="tutor-progress">سوال {Math.min(practiceCount+1, PRACTICE_LIMIT)}/{PRACTICE_LIMIT}</div>
+        )}
+      </div>
+
+      <div className="tutor-chat-box">
+        {messages.map((m, i) => (
+          <div key={i} className={`tutor-msg ${m.role}`}>{m.text}</div>
+        ))}
+        {loading && (
+          <div className="tutor-typing"><span></span><span></span><span></span></div>
+        )}
+      </div>
+
+      {mode === "done" ? (
+        <div className="tutor-done-row">
+          <button className="btn-edit" onClick={startPractice}>🔁 دوبارہ مشق کریں</button>
+          <button className="btn-edit" onClick={startChat}>💬 سوال پوچھیں</button>
+          <button className="tutor-close-btn" onClick={() => setMode("idle")}>بند کریں</button>
+        </div>
+      ) : (
+        <div className="tutor-input-row">
+          <input
+            className="form-input"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSend()}
+            placeholder="یہاں اپنا جواب یا سوال لکھیں..."
+            disabled={loading}
+          />
+          <button className="tutor-send-btn" onClick={handleSend} disabled={loading}>بھیجیں</button>
+        </div>
+      )}
+    </div>
   );
 }
 
